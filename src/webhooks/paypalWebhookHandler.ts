@@ -1,5 +1,5 @@
-import { paypalService } from '../services/paypalService';
 import { config } from '../config';
+import { paypalService } from '../services/paypalService';
 
 export interface PayPalWebhookEvent {
   id: string;

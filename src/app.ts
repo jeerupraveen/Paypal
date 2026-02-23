@@ -1,5 +1,6 @@
 import express, { Express, Request, Response } from 'express';
 import webhookRoutes from './routes/webhooks';
+import ordersRoutes from './routes/orders';
 import { config } from './config';
 
 const app: Express = express();
@@ -17,6 +18,7 @@ app.use((req: Request, res: Response, next) => {
 
 // Routes
 app.use('/', webhookRoutes);
+app.use('/', ordersRoutes);
 
 // Root endpoint
 app.get('/', (req: Request, res: Response) => {
@@ -27,6 +29,15 @@ app.get('/', (req: Request, res: Response) => {
     endpoints: {
       health: '/api/health',
       webhook: config.webhook.path,
+      orders: {
+        create: 'POST /api/orders',
+        status: 'GET /api/orders/:orderId',
+        confirm: 'POST /api/orders/:orderId/confirm',
+        cancel: 'DELETE /api/orders/:orderId',
+      },
+      refunds: {
+        refund: 'POST /api/payments/:captureId/refund',
+      },
     },
   });
 });

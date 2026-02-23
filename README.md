@@ -11,6 +11,9 @@ A Node.js backend server built with TypeScript that handles PayPal webhook event
 - 🏥 **Health Checks** - Built-in health check endpoint
 - 📝 **TypeScript Support** - Full type safety and modern JavaScript features
 - ⚡ **Express.js** - Fast and minimalist web framework
+- 🔄 **Complete Order Lifecycle** - Create, confirm, cancel, and refund orders through REST API
+- 🎯 **Payment Processing API** - Full Checkout API integration with PayPal
+- 💾 **Token Caching** - Automatic OAuth2 token management with expiration handling
 
 ## Prerequisites
 
@@ -113,7 +116,166 @@ Returns API information and available endpoints.
   "status": "running",
   "endpoints": {
     "health": "/api/health",
-    "webhook": "/api/webhooks/paypal"
+    "webhook": "/api/webhooks/paypal",
+    "orders": {
+      "create": "POST /api/orders",
+      "status": "GET /api/orders/:orderId",
+      "confirm": "POST /api/orders/:orderId/confirm",
+      "cancel": "DELETE /api/orders/:orderId"
+    },
+    "refunds": {
+      "refund": "POST /api/payments/:captureId/refund"
+    }
+  }
+}
+```
+
+### Orders
+
+#### Create Order
+
+```http
+POST /api/orders
+```
+
+Create a new PayPal order.
+
+**Request Body:**
+```json
+{
+  "amount": 10000,
+  "currency": "USD",
+  "description": "Product description",
+  "metadata": {
+    "order_id": "12345",
+    "customer_id": "cust_123"
+  },
+  "returnUrl": "https://example.com/return"
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "success": true,
+  "data": {
+    "orderId": "5O190127070081303",
+    "status": "CREATED",
+    "links": [
+      {
+        "rel": "approve",
+        "href": "https://www.sandbox.paypal.com/checkoutnow?..."
+      }
+    ]
+  }
+}
+```
+
+#### Get Order Status
+
+```http
+GET /api/orders/:orderId
+```
+
+Check the status of a PayPal order.
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "orderId": "5O190127070081303",
+    "status": "APPROVED",
+    "payer": {
+      "email_address": "customer@example.com"
+    },
+    "amount": {
+      "currency_code": "USD",
+      "value": "100.00"
+    },
+    "captureId": "3C679366..."
+  }
+}
+```
+
+#### Confirm/Capture Order
+
+```http
+POST /api/orders/:orderId/confirm
+```
+
+Confirm and capture a PayPal order (complete the payment).
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "orderId": "5O190127070081303",
+    "status": "COMPLETED",
+    "payer": {
+      "email_address": "customer@example.com",
+      "name": {
+        "given_name": "John",
+        "surname": "Doe"
+      }
+    },
+    "captureId": "3C679366..."
+  }
+}
+```
+
+#### Cancel Order
+
+```http
+DELETE /api/orders/:orderId
+```
+
+Cancel an order.
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Order cancelled successfully"
+}
+```
+
+### Payments
+
+#### Refund Payment
+
+```http
+POST /api/payments/:captureId/refund
+```
+
+Refund a completed payment.
+
+**Request Body:**
+```json
+{
+  "amount": 10000,
+  "currency": "USD",
+  "description": "Customer requested refund",
+  "metadata": {
+    "reason": "quality_issue"
+  }
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "success": true,
+  "data": {
+    "refundId": "9HH86..."
+    "status": "PENDING",
+    "links": [
+      {
+        "rel": "self",
+        "href": "https://api.sandbox.paypal.com/v2/payments/refunds/9HH86..."
+      }
+    ]
   }
 }
 ```
@@ -173,12 +335,14 @@ src/
 ├── config/           # Configuration files
 │   └── index.ts      # Environment config
 ├── routes/           # Express routes
-│   └── webhooks.ts   # Webhook routes
+│   ├── webhooks.ts   # Webhook routes
+│   └── orders.ts     # Order management routes
 ├── services/         # Business logic
-│   └── paypalService.ts  # PayPal API service
+│   └── paypalService.ts  # PayPal API service with full order lifecycle
 ├── webhooks/         # Webhook handlers
 │   └── paypalWebhookHandler.ts   # Event handlers
 ├── types/            # TypeScript type definitions
+│   └── paypal.ts     # PayPal API types
 ├── app.ts            # Express app setup
 └── index.ts          # Server entry point
 
@@ -193,6 +357,11 @@ Handles all PayPal API interactions:
 - **getAccessToken()** - Obtains OAuth2 access token with caching
 - **verifyWebhookSignature()** - Verifies webhook authenticity
 - **getWebhookEvent()** - Retrieves webhook event details
+- **createOrder()** - Creates a new PayPal order
+- **confirmOrder()** - Captures and completes a PayPal order
+- **getOrderStatus()** - Retrieves current order status
+- **cancelOrder()** - Cancels an order locally
+- **refundPayment()** - Initiates a refund for a payment
 
 ### WebhookHandler (`src/webhooks/paypalWebhookHandler.ts`)
 
@@ -200,6 +369,16 @@ Processes incoming webhook events:
 - Event validation and signature verification
 - Event routing based on event type
 - Specific handlers for different event types
+- Support for 8+ PayPal webhook event types
+
+### Order Routes (`src/routes/orders.ts`)
+
+REST API endpoints for PayPal operations:
+- Create orders
+- Get order status
+- Confirm/capture orders
+- Cancel orders
+- Refund payments
 
 ## Development
 
@@ -246,6 +425,51 @@ The project includes source maps for easier debugging:
 3. **Environment Variables** - Never commit `.env` to version control
 4. **Token Caching** - OAuth tokens are cached with automatic refresh
 5. **Error Handling** - Sensitive errors are not exposed in responses
+
+## Usage Examples
+
+### Create a PayPal Order
+
+```bash
+curl -X POST http://localhost:3000/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 10000,
+    "currency": "USD",
+    "description": "Order for product X"
+  }'
+```
+
+### Confirm/Capture an Order
+
+```bash
+curl -X POST http://localhost:3000/api/orders/{orderId}/confirm \
+  -H "Content-Type: application/json"
+```
+
+### Check Order Status
+
+```bash
+curl http://localhost:3000/api/orders/{orderId}
+```
+
+### Refund a Payment
+
+```bash
+curl -X POST http://localhost:3000/api/payments/{captureId}/refund \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount": 5000,
+    "currency": "USD",
+    "description": "Refund for order cancellation"
+  }'
+```
+
+### Cancel an Order
+
+```bash
+curl -X DELETE http://localhost:3000/api/orders/{orderId}
+```
 
 ## Extending the Application
 

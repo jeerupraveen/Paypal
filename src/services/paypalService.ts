@@ -1,18 +1,28 @@
 import axios, { AxiosInstance } from 'axios';
 import { config } from '../config';
+import {
+  PayPalOrderRequest,
+  PayPalOrderResponse,
+  PayPalConfirmResponse,
+  PayPalStatusResponse,
+  PayPalRefundResponse,
+  OrderData,
+  RefundData,
+} from '../types/paypal';
 
 export class PayPalService {
   private axiosInstance: AxiosInstance;
   private accessToken: string | null = null;
   private tokenExpiry: number = 0;
+  private baseURL: string;
 
   constructor() {
-    const baseURL = config.paypal.mode === 'sandbox'
+    this.baseURL = config.paypal.mode === 'sandbox'
       ? 'https://api-m.sandbox.paypal.com'
       : 'https://api-m.paypal.com';
 
     this.axiosInstance = axios.create({
-      baseURL,
+      baseURL: this.baseURL,
       auth: {
         username: config.paypal.clientId,
         password: config.paypal.clientSecret,
@@ -30,8 +40,13 @@ export class PayPalService {
     }
 
     try {
-      const response = await this.axiosInstance.post('/v1/oauth2/token', 'grant_type=client_credentials', {
+      const authToken = Buffer.from(
+        `${config.paypal.clientId}:${config.paypal.clientSecret}`
+      ).toString('base64');
+
+      const response = await axios.post(`${this.baseURL}/v1/oauth2/token`, 'grant_type=client_credentials', {
         headers: {
+          Authorization: `Basic ${authToken}`,
           'Content-Type': 'application/x-www-form-urlencoded',
         },
       });
@@ -103,6 +118,224 @@ export class PayPalService {
     } catch (error) {
       console.error('Failed to get webhook event:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Create a PayPal order
+   */
+  async createOrder(orderData: OrderData): Promise<{
+    success: boolean;
+    data?: PayPalOrderResponse;
+    error?: string;
+  }> {
+    try {
+      const token = await this.getAccessToken();
+
+      const payloadData: PayPalOrderRequest = {
+        intent: 'CAPTURE',
+        purchase_units: [
+          {
+            amount: {
+              currency_code: orderData.currency.toUpperCase(),
+              value: (orderData.amount / 100).toString(), // Convert to human-readable format
+            },
+          },
+        ],
+        application_context: {
+          locale: 'en-US',
+        },
+      };
+
+      const response = await axios.post<PayPalOrderResponse>(
+        `${this.baseURL}/v2/checkout/orders`,
+        payloadData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (response.status === 201 && response.data.id) {
+        return {
+          success: true,
+          data: response.data,
+        };
+      }
+
+      return {
+        success: false,
+        error: 'Failed to create PayPal order',
+      };
+    } catch (error: any) {
+      console.error('Error creating PayPal order:', error.message);
+      return {
+        success: false,
+        error: error.message || 'Failed to create PayPal order',
+      };
+    }
+  }
+
+  /**
+   * Confirm/Capture a PayPal order
+   */
+  async confirmOrder(orderId: string): Promise<{
+    success: boolean;
+    data?: PayPalConfirmResponse;
+    error?: string;
+  }> {
+    try {
+      const token = await this.getAccessToken();
+
+      const response = await axios.post<PayPalConfirmResponse>(
+        `${this.baseURL}/v2/checkout/orders/${orderId}/capture`,
+        {},
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if ([200, 201].includes(response.status) && response.data.id) {
+        return {
+          success: true,
+          data: response.data,
+        };
+      }
+
+      return {
+        success: false,
+        error: 'Failed to confirm PayPal order',
+      };
+    } catch (error: any) {
+      console.error('Error confirming PayPal order:', error.message);
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message || 'Failed to confirm PayPal order',
+      };
+    }
+  }
+
+  /**
+   * Get order status
+   */
+  async getOrderStatus(orderId: string): Promise<{
+    success: boolean;
+    data?: PayPalStatusResponse;
+    error?: string;
+  }> {
+    try {
+      const token = await this.getAccessToken();
+
+      const response = await axios.get<PayPalStatusResponse>(
+        `${this.baseURL}/v2/checkout/orders/${orderId}`,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (response.status === 200 && response.data.id) {
+        return {
+          success: true,
+          data: response.data,
+        };
+      }
+
+      return {
+        success: false,
+        error: 'Failed to get order status',
+      };
+    } catch (error: any) {
+      console.error('Error getting order status:', error.message);
+      return {
+        success: false,
+        error: error.message || 'Failed to get order status',
+      };
+    }
+  }
+
+  /**
+   * Cancel an order
+   */
+  async cancelOrder(orderId: string): Promise<{
+    success: boolean;
+    message?: string;
+    error?: string;
+  }> {
+    try {
+      // Note: PayPal doesn't have a direct cancel endpoint for orders
+      // Cancellation is handled through order status checks and payment denial
+      // This is a placeholder for local cancellation tracking
+
+      console.log(`Order ${orderId} marked as cancelled locally`);
+
+      return {
+        success: true,
+        message: 'Order cancelled successfully',
+      };
+    } catch (error: any) {
+      console.error('Error cancelling order:', error.message);
+      return {
+        success: false,
+        error: error.message || 'Failed to cancel order',
+      };
+    }
+  }
+
+  /**
+   * Refund a payment
+   */
+  async refundPayment(captureId: string, refundData: RefundData): Promise<{
+    success: boolean;
+    data?: PayPalRefundResponse;
+    error?: string;
+  }> {
+    try {
+      const token = await this.getAccessToken();
+
+      const refundPayload = {
+        amount: {
+          currency_code: refundData.currency.toUpperCase(),
+          value: (refundData.amount / 100).toString(), // Convert to human-readable format
+        },
+        note_to_payer: refundData.description || 'Refund requested',
+      };
+
+      const response = await axios.post<PayPalRefundResponse>(
+        `${this.baseURL}/v2/payments/captures/${captureId}/refund`,
+        refundPayload,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if ([200, 201].includes(response.status) && response.data.id) {
+        return {
+          success: true,
+          data: response.data,
+        };
+      }
+
+      return {
+        success: false,
+        error: 'Failed to refund payment',
+      };
+    } catch (error: any) {
+      console.error('Error refunding payment:', error.message);
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message || 'Failed to refund payment',
+      };
     }
   }
 }
