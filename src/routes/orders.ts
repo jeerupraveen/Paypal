@@ -175,6 +175,53 @@ router.delete('/api/orders/:orderId', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/payment-links
+ * Create a payment link
+ */
+router.post('/api/payment-links', async (req: Request, res: Response) => {
+  try {
+    const { amount, currency, description, reference_id } = req.body;
+
+    if (!amount || !currency) {
+      return res.status(400).json({
+        success: false,
+        error: 'amount and currency are required',
+      });
+    }
+
+    const result = await paypalService.createPaymentLink({
+      amount,
+      currency,
+      description,
+      reference_id,
+    });
+
+    if (result.success && result.data) {
+      return res.status(201).json({
+        success: true,
+        data: {
+          linkId: result.data.id,
+          status: result.data.status,
+          payment_link: result.data.payment_link,
+          links: result.data.links,
+        },
+      });
+    }
+
+    return res.status(400).json({
+      success: false,
+      error: result.error,
+    });
+  } catch (error) {
+    console.error('Error creating payment link:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to create payment link',
+    });
+  }
+});
+
+/**
  * POST /api/payments/:captureId/refund
  * Refund a payment
  */

@@ -6,6 +6,8 @@ import {
   PayPalConfirmResponse,
   PayPalStatusResponse,
   PayPalRefundResponse,
+  PayPalPaymentLinkRequest,
+  PayPalPaymentLinkResponse,
   OrderData,
   RefundData,
 } from '../types/paypal';
@@ -285,6 +287,104 @@ export class PayPalService {
       return {
         success: false,
         error: error.message || 'Failed to cancel order',
+      };
+    }
+  }
+
+  /**
+   * Create a payment link
+   */
+  async createPaymentLink(linkData: PayPalPaymentLinkRequest): Promise<{
+    success: boolean;
+    data?: PayPalPaymentLinkResponse;
+    error?: string;
+  }> {
+    try {
+      const token = await this.getAccessToken();
+
+      const invoicePayload = {
+        detail: {
+          invoice_number: String(Date.now()),
+          invoice_date: new Date().toISOString().split('T')[0],
+          reference: linkData.reference_id || String(Date.now()),
+          note: linkData.description || 'Payment required',
+        },
+        invoicer: {
+          name: {
+            given_name: 'PayPal',
+            surname: 'Store',
+          },
+        },
+        items: [
+          {
+            name: linkData.description || 'Payment',
+            quantity: '1',
+            unit_amount: {
+              currency_code: linkData.currency.toUpperCase(),
+              value: (linkData.amount / 100).toString(),
+            },
+          },
+        ],
+        amount_summary: {
+          currency_code: linkData.currency.toUpperCase(),
+          subtotal: (linkData.amount / 100).toString(),
+          total_amount: (linkData.amount / 100).toString(),
+        },
+      };
+
+      const invoiceResponse = await axios.post<any>(
+        `${this.baseURL}/v2/invoicing/invoices`,
+        invoicePayload,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if ([201, 200].includes(invoiceResponse.status) && invoiceResponse.data.id) {
+        // Send invoice to generate payment link
+        await axios.post(
+          `${this.baseURL}/v2/invoicing/invoices/${invoiceResponse.data.id}/send`,
+          {
+            send_to_invoicer: false,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        const paymentLink = `${this.baseURL.replace('api-m.', '').replace('.paypal.com', '.com')}/invoice/${invoiceResponse.data.id}`;
+
+        return {
+          success: true,
+          data: {
+            id: invoiceResponse.data.id,
+            status: 'CREATED',
+            payment_link: paymentLink,
+            links: [
+              {
+                rel: 'invoice_url',
+                href: paymentLink,
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        success: false,
+        error: 'Failed to create payment link',
+      };
+    } catch (error: any) {
+      console.error('Error creating payment link:', error.message);
+      return {
+        success: false,
+        error: error.message || 'Failed to create payment link',
       };
     }
   }

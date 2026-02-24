@@ -98,7 +98,24 @@ export interface OrderData {
   metadata?: any;
   returnUrl?: string;
 }
+export interface PayPalPaymentLinkRequest {
+  amount: number;
+  currency: string;
+  description?: string;
+  reference_id?: string;
+  expire_after?: number;
+}
 
+export interface PayPalPaymentLinkResponse {
+  id: string;
+  status: string;
+  payment_link?: string;
+  links?: Array<{
+    rel: string;
+    href: string;
+    method?: string;
+  }>;
+}
 export interface RefundData {
   amount: number;
   currency: string;
